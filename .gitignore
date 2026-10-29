@@ -1,10 +1,28 @@
+# Node.js
 node_modules/
 dist/
-artifacts/
-cache/
-coverage/
+
+# Environment variables and secrets
 .env
+.env.*
+!.env.example
+
+# Java and Maven
 target/
-.idea/
+*.class
+
+# IDE
 .vscode/
+.idea/
+
+# Operating system
+.DS_Store
+Thumbs.db
+
+# Logs
 *.log
+
+# Local blockchain artifacts
+contracts/artifacts/
+contracts/cache/
+contracts/typechain-types/
