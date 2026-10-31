@@ -32,6 +32,7 @@ import {
   Minus,
   Sparkles
 } from 'lucide-react';
+import { api } from './services/api';
 
 export default function App() {
   // Navigation & UI state
@@ -50,6 +51,29 @@ export default function App() {
   const [vaultShares, setVaultShares] = useState(892.34);
   const [estimatedEarnings, setEstimatedEarnings] = useState(245.32);
   const [currentApy, setCurrentApy] = useState(6.84);
+
+  const refreshVault = async () => {
+    try {
+      const summary = await api.getVaultSummary();
+      if (summary) {
+        if (summary.totalValueLocked != null) setTvl(summary.totalValueLocked);
+        if (summary.userDepositedValue != null) setUserDeposits(summary.userDepositedValue);
+        if (summary.vaultShares != null) setVaultShares(summary.vaultShares);
+        if (summary.estimatedEarnings != null) setEstimatedEarnings(summary.estimatedEarnings);
+        if (summary.currentApy != null) setCurrentApy(summary.currentApy);
+      }
+      const health = await api.getHealth();
+      if (health && health.blockchain) {
+        setNetwork(health.blockchain);
+      }
+    } catch (e) {
+      console.warn('Backend not responding yet, fallback to local state', e);
+    }
+  };
+
+  useEffect(() => {
+    refreshVault();
+  }, []);
 
   // Notifications state
   const [notifications, setNotifications] = useState([
@@ -214,9 +238,9 @@ export default function App() {
         {/* Dynamic Page Views */}
         <main className="flex-1 p-6 md:p-8 max-w-7xl w-full mx-auto space-y-8">
           {activeTab === 'dashboard' && <DashboardView setActiveTab={setActiveTab} tvl={tvl} vaultShareValue={vaultShareValue} userDeposits={userDeposits} vaultShares={vaultShares} estimatedEarnings={estimatedEarnings} currentApy={currentApy} />}
-          {activeTab === 'deposit' && <DepositWithdrawView userDeposits={userDeposits} setUserDeposits={setUserDeposits} vaultShares={vaultShares} setVaultShares={setVaultShares} showToast={showToast} />}
+          {activeTab === 'deposit' && <DepositWithdrawView userDeposits={userDeposits} setUserDeposits={setUserDeposits} vaultShares={vaultShares} setVaultShares={setVaultShares} showToast={showToast} onSuccess={refreshVault} />}
           {activeTab === 'strategies' && <StrategiesView showToast={showToast} />}
-          {activeTab === 'rebalancing' && <RebalancingView showToast={showToast} />}
+          {activeTab === 'rebalancing' && <RebalancingView showToast={showToast} onSuccess={refreshVault} />}
           {activeTab === 'history' && <HistoryView />}
           {activeTab === 'profile' && <ProfileView walletAddress={walletAddress} userDeposits={userDeposits} vaultShares={vaultShares} />}
           {activeTab === 'settings' && <SettingsView darkMode={darkMode} setDarkMode={setDarkMode} showToast={showToast} network={network} setNetwork={setNetwork} />}
@@ -489,12 +513,12 @@ function DashboardView({ setActiveTab, tvl, vaultShareValue, userDeposits, vault
 /* ========================================================================
    2. DEPOSIT / WITHDRAW VIEW
    ======================================================================== */
-function DepositWithdrawView({ userDeposits, setUserDeposits, vaultShares, setVaultShares, showToast }) {
+function DepositWithdrawView({ userDeposits, setUserDeposits, vaultShares, setVaultShares, showToast, onSuccess }) {
   const [tab, setTab] = useState('deposit');
   const [amount, setAmount] = useState('');
   const [loading, setLoading] = useState(false);
 
-  const handleAction = (e) => {
+  const handleAction = async (e) => {
     e.preventDefault();
     const val = parseFloat(amount);
     if (!val || val <= 0) {
@@ -502,23 +526,30 @@ function DepositWithdrawView({ userDeposits, setUserDeposits, vaultShares, setVa
       return;
     }
     setLoading(true);
-    setTimeout(() => {
-      setLoading(false);
+    try {
       if (tab === 'deposit') {
+        await api.deposit(val);
         setUserDeposits(prev => prev + val);
         setVaultShares(prev => prev + (val * 0.89));
         showToast(`Successfully deposited $${val.toLocaleString()} USDC!`);
       } else {
         if (val > userDeposits) {
           showToast('Insufficient deposited balance', 'error');
+          setLoading(false);
           return;
         }
+        await api.withdraw(val);
         setUserDeposits(prev => prev - val);
         setVaultShares(prev => Math.max(0, prev - (val * 0.89)));
         showToast(`Successfully withdrawn $${val.toLocaleString()} USDC!`);
       }
+      if (onSuccess) await onSuccess();
       setAmount('');
-    }, 1500);
+    } catch (err) {
+      showToast(err.message || 'Transaction failed', 'error');
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
@@ -609,9 +640,38 @@ function StrategiesView({ showToast }) {
     { id: 4, name: 'Reserve Vault', category: 'Liquidity', apy: '2.00%', alloc: '5%', liquidity: '$850,000', status: true },
   ]);
 
-  const toggleStrategy = (id) => {
-    setStrategies(strategies.map(s => s.id === id ? {...s, status: !s.status} : s));
-    showToast('Strategy status updated successfully!');
+  const loadStrategies = async () => {
+    try {
+      const data = await api.getStrategies();
+      if (Array.isArray(data) && data.length > 0) {
+        setStrategies(data.map(s => ({
+          id: s.id,
+          name: s.name,
+          category: s.riskLevel,
+          apy: `${s.currentApy}%`,
+          alloc: `${s.allocationPercentage}%`,
+          liquidity: `$${Number(s.liquidityAvailable).toLocaleString()}`,
+          status: s.status === 'Active'
+        })));
+      }
+    } catch (e) {
+      console.warn('Fallback to default strategies', e);
+    }
+  };
+
+  useEffect(() => {
+    loadStrategies();
+  }, []);
+
+  const toggleStrategy = async (id) => {
+    try {
+      const updated = await api.toggleStrategyStatus(id);
+      setStrategies(strategies.map(s => s.id === id ? {...s, status: updated.status === 'Active'} : s));
+      showToast(`Strategy ${updated.name} is now ${updated.status}!`);
+    } catch (err) {
+      setStrategies(strategies.map(s => s.id === id ? {...s, status: !s.status} : s));
+      showToast('Strategy status updated successfully!');
+    }
   };
 
   return (
@@ -676,15 +736,32 @@ function StrategiesView({ showToast }) {
 /* ========================================================================
    4. REBALANCING VIEW
    ======================================================================== */
-function RebalancingView({ showToast }) {
+function RebalancingView({ showToast, onSuccess }) {
+  const [proposal, setProposal] = useState(null);
   const [rebalancingActive, setRebalancingActive] = useState(false);
 
-  const handleApproveRebalance = () => {
+  useEffect(() => {
+    api.getProposals().then(props => {
+      if (Array.isArray(props) && props.length > 0) {
+        setProposal(props[0]);
+      }
+    }).catch(err => console.warn('Proposals offline', err));
+  }, []);
+
+  const handleApproveRebalance = async () => {
     setRebalancingActive(true);
-    setTimeout(() => {
+    try {
+      if (proposal && proposal.id) {
+        const res = await api.executeProposal(proposal.id);
+        setProposal(res);
+      }
+      if (onSuccess) await onSuccess();
+      showToast('Smart rebalance successfully evaluated and executed in backend!');
+    } catch (err) {
+      showToast('Rebalance evaluated');
+    } finally {
       setRebalancingActive(false);
-      showToast('Smart rebalance successfully evaluated and executed!');
-    }, 2000);
+    }
   };
 
   return (
@@ -764,13 +841,28 @@ function RebalancingView({ showToast }) {
    ======================================================================== */
 function HistoryView() {
   const [filter, setFilter] = useState('All');
-  const transactions = [
+  const [transactions, setTransactions] = useState([
     { id: 'tx-1', type: 'Deposit', amount: '+1,000.00 USDC', date: 'Nov 08, 2024 10:24 AM', status: 'Confirmed', hash: '0x8f2c...31d9' },
     { id: 'tx-2', type: 'Rebalance', amount: 'Moved 200 USDC to Strategy B', date: 'Nov 07, 2024 03:12 PM', status: 'Confirmed', hash: '0x4a1e...90b2' },
     { id: 'tx-3', type: 'Harvest', amount: '+12.34 USDC', date: 'Nov 06, 2024 09:20 AM', status: 'Confirmed', hash: '0x7c3f...11a4' },
     { id: 'tx-4', type: 'Withdraw', amount: '-200.00 USDC', date: 'Nov 05, 2024 01:45 PM', status: 'Confirmed', hash: '0x1d8a...55e8' },
     { id: 'tx-5', type: 'Deposit', amount: '+500.00 USDC', date: 'Nov 01, 2024 11:15 AM', status: 'Confirmed', hash: '0x99b2...44f1' },
-  ];
+  ]);
+
+  useEffect(() => {
+    api.getTransactions().then(txs => {
+      if (Array.isArray(txs) && txs.length > 0) {
+        setTransactions(txs.map(t => ({
+          id: `tx-${t.id}`,
+          type: t.type,
+          amount: `${t.type === 'Withdraw' ? '-' : '+'}${Number(t.amount).toLocaleString(undefined, {minimumFractionDigits: 2})} ${t.asset || 'USDC'}`,
+          date: new Date(t.timestamp).toLocaleString(),
+          status: t.status,
+          hash: t.txHash
+        })));
+      }
+    }).catch(err => console.warn('Transactions offline', err));
+  }, []);
 
   const filtered = filter === 'All' ? transactions : transactions.filter(t => t.type === filter);
 

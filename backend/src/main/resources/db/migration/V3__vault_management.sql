@@ -1,0 +1,38 @@
+CREATE TABLE IF NOT EXISTS vaults (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    name VARCHAR(255) NOT NULL,
+    asset_symbol VARCHAR(32) NOT NULL DEFAULT 'USDC',
+    total_assets DECIMAL(38, 18) NOT NULL DEFAULT 0,
+    total_shares DECIMAL(38, 18) NOT NULL DEFAULT 0,
+    estimated_apy DECIMAL(10, 4) NOT NULL DEFAULT 0,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS vault_positions (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    vault_id BIGINT NOT NULL,
+    wallet_address VARCHAR(64) NOT NULL,
+    shares DECIMAL(38, 18) NOT NULL DEFAULT 0,
+    deposited_assets DECIMAL(38, 18) NOT NULL DEFAULT 0,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    CONSTRAINT fk_pos_vault FOREIGN KEY (vault_id) REFERENCES vaults(id) ON DELETE CASCADE,
+    CONSTRAINT uq_vault_wallet UNIQUE (vault_id, wallet_address)
+);
+
+CREATE TABLE IF NOT EXISTS vault_transactions (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    vault_id BIGINT NULL,
+    wallet_address VARCHAR(64) NULL,
+    transaction_type VARCHAR(32) NOT NULL,
+    asset_amount DECIMAL(38, 18) NOT NULL,
+    share_amount DECIMAL(38, 18) NOT NULL,
+    transaction_hash VARCHAR(128) NULL UNIQUE,
+    status VARCHAR(32) NOT NULL DEFAULT 'SIMULATED',
+    source VARCHAR(32) NOT NULL DEFAULT 'SIMULATED',
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT fk_tx_vault FOREIGN KEY (vault_id) REFERENCES vaults(id) ON DELETE SET NULL
+);
+
+CREATE INDEX idx_vault_tx_wallet ON vault_transactions(wallet_address);
