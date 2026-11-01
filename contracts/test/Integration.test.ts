@@ -705,23 +705,21 @@ it("Should recover the remaining liquidity after a partial strategy withdrawal",
         500n * USDC
     );
 });
-it("Should expose the failure when a strategy totalAssets() call reverts", async () => {
-    // Deploy the faulty strategy.
-    const faultyStrategy = await viem.deployContract("FaultyStrategy", [
-        token.address,
-    ]);
+it("Should recover liquidity after isolating a strategy whose totalAssets() reverts", async () => {
+    // Deploy faulty strategy.
+    const faultyStrategy = await viem.deployContract(
+    "FaultyStrategy",
+    [token.address]
+);
 
-    await faultyStrategy.write.setManager(
-        [manager.address],
-        { account: owner.account }
-    );
+    await faultyStrategy.write.setManager([manager.address]);
 
     await manager.write.registerStrategy(
         [faultyStrategy.address, 8000n],
         { account: owner.account }
     );
 
-    // Deploy another healthy strategy.
+    // Deploy healthy strategy.
     const healthyStrategy = await viem.deployContract("MockStrategy", [
         token.address,
     ]);
@@ -739,33 +737,34 @@ it("Should expose the failure when a strategy totalAssets() call reverts", async
     // Deposit 1,000 USDC.
     await deposit(DEPOSIT_AMOUNT);
 
-    // Allocate 200 + 300 + 300 USDC.
+    // Allocate 200 USDC to the original strategy.
     await allocate(200n * USDC);
 
+    // Allocate 300 USDC to faulty strategy.
     await vault.write.allocateToStrategy(
         [faultyStrategy.address, 300n * USDC],
         { account: owner.account }
     );
 
+    // Allocate 300 USDC to healthy strategy.
     await vault.write.allocateToStrategy(
         [healthyStrategy.address, 300n * USDC],
         { account: owner.account }
     );
 
-    // Make the first strategy unavailable for withdrawals.
+    // Disable withdrawals from the original strategy.
     await strategy.write.setWithdrawalsEnabled(
         [false],
         { account: owner.account }
     );
 
-    // Make the second strategy's totalAssets() revert.
+    // Activate faulty strategy valuation failure.
     await faultyStrategy.write.setTotalAssetsFailure(
         [true],
         { account: owner.account }
     );
 
-    // The user needs to redeem 500 USDC.
-    // Current manager implementation is expected to revert.
+    // Normal redemption must fail while valuation is unavailable.
     await assert.rejects(async () => {
         await vault.write.redeem(
             [
@@ -776,6 +775,68 @@ it("Should expose the failure when a strategy totalAssets() call reverts", async
             { account: user.account }
         );
     });
+
+    // Pause the faulty strategy.
+    await manager.write.setStrategyPaused(
+        [faultyStrategy.address, true],
+        { account: owner.account }
+    );
+
+    // Recover its 300 USDC.
+    await manager.write.emergencyWithdrawFromStrategy(
+        [faultyStrategy.address, 300n * USDC],
+        { account: owner.account }
+    );
+
+    // Confirm recovery reference is zero.
+    assert.equal(
+        await manager.read.lastKnownStrategyAssets([
+            faultyStrategy.address,
+        ]),
+        0n
+    );
+
+    // Confirm actual strategy token balance is zero.
+    assert.equal(
+        await token.read.balanceOf([faultyStrategy.address]),
+        0n
+    );
+
+    // Remove the recovered strategy.
+    await manager.write.emergencyRemoveStrategy(
+        [faultyStrategy.address],
+        { account: owner.account }
+    );
+
+    // Redemption should work again.
+    await vault.write.redeem(
+        [
+            500n * USDC,
+            user.account.address,
+            user.account.address,
+        ],
+        { account: user.account }
+    );
+
+    assert.equal(
+        await token.read.balanceOf([user.account.address]),
+        1500n * USDC
+    );
+
+    assert.equal(
+        await strategy.read.totalAssets(),
+        200n * USDC
+    );
+
+    assert.equal(
+        await healthyStrategy.read.totalAssets(),
+        300n * USDC
+    );
+
+    assert.equal(
+        await vault.read.totalAssets(),
+        500n * USDC
+    );
 });
 
 });
