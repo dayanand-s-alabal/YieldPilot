@@ -283,16 +283,16 @@ function RebalancingView() {
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
           <div className="p-4 bg-slate-50 dark:bg-slate-800/50 rounded-2xl border border-slate-100 dark:border-slate-800 text-xs space-y-2">
             <p className="font-bold text-slate-500 mb-2">StrategyManager Constraints</p>
-            <div className="flex justify-between"><span>Minimum Reserve Requirement:</span><span className="font-bold">10% (1,000 bps)</span></div>
-            <div className="flex justify-between"><span>Strategy Allocation Cap:</span><span className="font-bold">50% (5,000 bps)</span></div>
-            <div className="flex justify-between"><span>Target Strategy:</span><span className="font-bold font-mono">MockStrategy</span></div>
+            <div className="flex justify-between text-emerald-200"><span>Minimum Reserve Requirement:</span><span className="font-bold">10% (1,000 bps)</span></div>
+            <div className="flex justify-between text-emerald-200"><span>Strategy Allocation Cap:</span><span className="font-bold">50% (5,000 bps)</span></div>
+            <div className="flex justify-betweenn text-emerald-200"><span>Target Strategy:</span><span className="font-bold font-mono">MockStrategy</span></div>
           </div>
 
           <div className="p-4 bg-emerald-50/50 dark:bg-emerald-950/20 rounded-2xl border border-emerald-100 dark:border-emerald-900/50 text-xs space-y-2">
             <p className="font-bold text-emerald-600 dark:text-emerald-400 mb-2">Optimization Target</p>
-            <div className="flex justify-between"><span>Maintain Liquid Reserve:</span><span className="font-bold">≥ 10%</span></div>
-            <div className="flex justify-between"><span>Active Yield Allocation:</span><span className="font-bold">Up to 50%</span></div>
-            <div className="flex justify-between"><span>Slippage & Loss Bound:</span><span className="font-bold">Strictly 0%</span></div>
+            <div className="flex justify-between text-emerald-200"><span>Maintain Liquid Reserve:</span><span className="font-bold">≥ 10%</span></div>
+            <div className="flex justify-between text-emerald-200"><span>Active Yield Allocation:</span><span className="font-bold">Up to 50%</span></div>
+            <div className="flex justify-between text-emerald-200"><span>Slippage & Loss Bound:</span><span className="font-bold">Strictly 0%</span></div>
           </div>
         </div>
 
