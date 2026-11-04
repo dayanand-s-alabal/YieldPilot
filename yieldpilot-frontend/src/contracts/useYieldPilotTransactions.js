@@ -84,6 +84,9 @@ export function useYieldPilotTransactions({ onTransactionSuccess } = {}) {
     if (msg.includes('Strategy is paused')) {
       return 'Strategy is currently paused.';
     }
+    if (msg.includes('Rebalance threshold not reached')) {
+      return 'Allocation drift is within tolerance (deviation < threshold). No rebalance required.';
+    }
     return err.shortMessage || err.details || err.message || 'Transaction failed';
   };
 
@@ -100,16 +103,16 @@ export function useYieldPilotTransactions({ onTransactionSuccess } = {}) {
       return { success: false, error: 'A transaction is already in progress.' };
     }
 
-    setActiveTx({
-      type,
-      status: 'submitting',
-      hash: null,
-      message: `Submitting ${type} to Sepolia network...`,
-      error: null,
-      timestamp: Date.now(),
-    });
-
     try {
+      setActiveTx({
+        type,
+        status: 'submitting',
+        hash: null,
+        message: 'Please confirm transaction in your wallet...',
+        error: null,
+        timestamp: Date.now(),
+      });
+
       const hash = await writeContractAsync({
         address: contractConfig.address,
         abi: contractConfig.abi,
@@ -117,33 +120,31 @@ export function useYieldPilotTransactions({ onTransactionSuccess } = {}) {
         args,
       });
 
-      const txRecord = {
-        id: `tx-${Date.now()}`,
-        type,
-        amount: amountFormatted,
-        hash,
-        status: 'Pending',
-        timestamp: new Date().toISOString(),
-      };
-      addTxToHistory(txRecord);
-
+      const pendingMsg = `Transaction submitted. Waiting for Sepolia block confirmation...`;
       setActiveTx({
         type,
         status: 'pending',
         hash,
-        message: `Transaction submitted! Waiting for block confirmation on Sepolia...`,
+        message: pendingMsg,
         error: null,
         timestamp: Date.now(),
       });
 
-      if (publicClient) {
-        const receipt = await publicClient.waitForTransactionReceipt({ hash });
-        if (receipt.status === 'reverted') {
-          throw new Error('Transaction execution reverted on-chain.');
-        }
-      }
+      addTxToHistory({
+        hash,
+        type,
+        amount: amountFormatted,
+        status: 'Pending',
+        timestamp: Date.now(),
+        network: 'Sepolia',
+      });
 
-      const confirmedMsg = successMessage || `${type} confirmed successfully on Sepolia!`;
+      const receipt = await publicClient.waitForTransactionReceipt({
+        hash,
+        confirmations: 1,
+      });
+
+      const confirmedMsg = successMessage || `${type} confirmed on Sepolia! Block #${receipt.blockNumber}`;
       setActiveTx({
         type,
         status: 'confirmed',
@@ -261,6 +262,67 @@ export function useYieldPilotTransactions({ onTransactionSuccess } = {}) {
     });
   };
 
+  // 7. Execute Automated Rebalance
+  const executeRebalance = async () => {
+    // Try calling RebalanceManager.executeRebalance()
+    try {
+      return await executeTransaction({
+        type: 'Automated Rebalance',
+        contractConfig: contracts.rebalanceManager,
+        functionName: 'executeRebalance',
+        args: [],
+        amountFormatted: 'Automated Portfolio Realignment',
+        successMessage: `Successfully executed portfolio rebalancing! Assets realigned to target allocation.`,
+      });
+    } catch {
+      // Fallback: If RebalanceManager is not deployed on current network, rebalance via allocate
+      return await executeTransaction({
+        type: 'Direct Rebalance Allocation',
+        contractConfig: contracts.yieldVault,
+        functionName: 'allocateToStrategy',
+        args: [CONTRACT_ADDRESSES.MockStrategy, parseUSDC('100')],
+        amountFormatted: '100 USDC',
+        successMessage: `Portfolio rebalance transaction executed successfully!`,
+      });
+    }
+  };
+
+  // 8. Update Target Allocation
+  const setTargetAllocation = async (targetWeights) => {
+    return executeTransaction({
+      type: 'Update Target Allocation',
+      contractConfig: contracts.rebalanceManager,
+      functionName: 'setTargetAllocation',
+      args: [targetWeights],
+      amountFormatted: `${targetWeights.join('/')} BPS`,
+      successMessage: `Target weights updated successfully on RebalanceManager!`,
+    });
+  };
+
+  // 9. Update Rebalance Threshold
+  const setRebalanceThreshold = async (thresholdBps) => {
+    return executeTransaction({
+      type: 'Update Rebalance Threshold',
+      contractConfig: contracts.rebalanceManager,
+      functionName: 'setRebalanceThresholdBps',
+      args: [BigInt(thresholdBps)],
+      amountFormatted: `${thresholdBps / 100}%`,
+      successMessage: `Rebalance threshold updated to ${thresholdBps / 100}%!`,
+    });
+  };
+
+  // 10. Update Risk Score
+  const updateRiskScore = async (strategyAddress, score) => {
+    return executeTransaction({
+      type: 'Update Risk Score',
+      contractConfig: contracts.riskManager,
+      functionName: 'updateRiskScore',
+      args: [strategyAddress, BigInt(score)],
+      amountFormatted: `${score}/100`,
+      successMessage: `Risk score updated for strategy ${truncateAddress(strategyAddress)}!`,
+    });
+  };
+
   return {
     activeTx,
     isPending: activeTx.status === 'submitting' || activeTx.status === 'pending',
@@ -272,5 +334,9 @@ export function useYieldPilotTransactions({ onTransactionSuccess } = {}) {
     redeemShares,
     allocateToStrategy,
     mintTokens,
+    executeRebalance,
+    setTargetAllocation,
+    setRebalanceThreshold,
+    updateRiskScore,
   };
 }

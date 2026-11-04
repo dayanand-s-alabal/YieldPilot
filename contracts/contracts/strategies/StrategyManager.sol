@@ -1,4 +1,3 @@
-
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.34;
 
@@ -14,6 +13,8 @@ contract StrategyManager is Ownable {
 
     IERC20 public immutable asset;
     address public vault;
+    address public rebalanceManager;
+    address public emergencyManager;
 
     // Minimum percentage of the portfolio that must remain liquid.
     uint256 public reserveBps;
@@ -31,7 +32,8 @@ contract StrategyManager is Ownable {
     );
 
     event VaultInitialized(address indexed vault);
-
+    event RebalanceManagerUpdated(address indexed rebalanceManager);
+    event EmergencyManagerUpdated(address indexed emergencyManager);
     event StrategyRemoved(address indexed strategy);
 
     event StrategyAllocationCapUpdated(
@@ -40,15 +42,15 @@ contract StrategyManager is Ownable {
     );
 
     event StrategyPauseUpdated(
-    address indexed strategy,
-    bool paused
-);
+        address indexed strategy,
+        bool paused
+    );
 
-event EmergencyStrategyWithdrawal(
-    address indexed strategy,
-    uint256 requested,
-    uint256 received
-);
+    event EmergencyStrategyWithdrawal(
+        address indexed strategy,
+        uint256 requested,
+        uint256 received
+    );
     event ReserveUpdated(uint256 newReserveBps);
 
     event Allocated(
@@ -68,29 +70,61 @@ event EmergencyStrategyWithdrawal(
         _;
     }
 
+    modifier onlyVaultOrRebalancer() {
+        require(
+            msg.sender == vault ||
+                (rebalanceManager != address(0) && msg.sender == rebalanceManager),
+            "Unauthorized allocation caller"
+        );
+        _;
+    }
+
+    modifier onlyOwnerOrEmergency() {
+        require(
+            msg.sender == owner() ||
+                (emergencyManager != address(0) && msg.sender == emergencyManager),
+            "Unauthorized emergency caller"
+        );
+        _;
+    }
+
     constructor(
-    address assetAddress,
-    address initialOwner,
-    uint256 initialReserveBps
-) Ownable(initialOwner) {
-    require(assetAddress != address(0), "Invalid asset");
-    require(
-        initialReserveBps <= BPS,
-        "Invalid reserve percentage"
-    );
+        address assetAddress,
+        address initialOwner,
+        uint256 initialReserveBps
+    ) Ownable(initialOwner) {
+        require(assetAddress != address(0), "Invalid asset");
+        require(
+            initialReserveBps <= BPS,
+            "Invalid reserve percentage"
+        );
 
-    asset = IERC20(assetAddress);
-    reserveBps = initialReserveBps;
-}
+        asset = IERC20(assetAddress);
+        reserveBps = initialReserveBps;
+    }
 
-function initializeVault(address vaultAddress) external onlyOwner {
-    require(vault == address(0), "Vault already initialized");
-    require(vaultAddress != address(0), "Invalid vault");
+    function initializeVault(address vaultAddress) external onlyOwner {
+        require(vault == address(0), "Vault already initialized");
+        require(vaultAddress != address(0), "Invalid vault");
 
-    vault = vaultAddress;
+        vault = vaultAddress;
 
-    emit VaultInitialized(vaultAddress);
-}
+        emit VaultInitialized(vaultAddress);
+    }
+
+    function setRebalanceManager(address _rebalanceManager) external onlyOwner {
+        require(_rebalanceManager != address(0), "Invalid rebalance manager");
+        rebalanceManager = _rebalanceManager;
+
+        emit RebalanceManagerUpdated(_rebalanceManager);
+    }
+
+    function setEmergencyManager(address _emergencyManager) external onlyOwner {
+        require(_emergencyManager != address(0), "Invalid emergency manager");
+        emergencyManager = _emergencyManager;
+
+        emit EmergencyManagerUpdated(_emergencyManager);
+    }
 
     // Number of registered strategies.
     function strategyCount() external view returns (uint256) {
@@ -102,22 +136,27 @@ function initializeVault(address vaultAddress) external onlyOwner {
         return strategies[index];
     }
 
+    // Return all registered strategies.
+    function getStrategies() external view returns (address[] memory) {
+        return strategies;
+    }
+
     // Total assets = manager's liquid balance + strategy assets.
     function totalManagedAssets() public view returns (uint256 total) {
-    total = asset.balanceOf(address(this));
+        total = asset.balanceOf(address(this));
 
-    for (uint256 i = 0; i < strategies.length; i++) {
-        address strategy = strategies[i];
+        for (uint256 i = 0; i < strategies.length; i++) {
+            address strategy = strategies[i];
 
-        try IStrategy(strategy).totalAssets() returns (
-            uint256 reportedAssets
-        ) {
-            total += reportedAssets;
-        } catch {
-            revert("Strategy valuation unavailable");
+            try IStrategy(strategy).totalAssets() returns (
+                uint256 reportedAssets
+            ) {
+                total += reportedAssets;
+            } catch {
+                revert("Strategy valuation unavailable");
+            }
         }
     }
-}
 
     // Register a strategy after its manager has been configured.
     function registerStrategy(
@@ -154,46 +193,47 @@ function initializeVault(address vaultAddress) external onlyOwner {
 
     // Remove a strategy only when it holds no assets.
     function removeStrategy(address strategy) external onlyOwner {
-    require(isRegistered[strategy], "Strategy not registered");
+        require(isRegistered[strategy], "Strategy not registered");
 
-    require(
-        IStrategy(strategy).totalAssets() == 0,
-        "Strategy still holds assets"
-    );
+        require(
+            IStrategy(strategy).totalAssets() == 0,
+            "Strategy still holds assets"
+        );
 
-    _removeStrategy(strategy);
-}
-
-function _removeStrategy(address strategy) internal {
-    for (uint256 i = 0; i < strategies.length; i++) {
-        if (strategies[i] == strategy) {
-            strategies[i] = strategies[strategies.length - 1];
-            strategies.pop();
-            break;
-        }
+        _removeStrategy(strategy);
     }
 
-    isRegistered[strategy] = false;
-    isStrategyPaused[strategy] = false;
+    function _removeStrategy(address strategy) internal {
+        for (uint256 i = 0; i < strategies.length; i++) {
+            if (strategies[i] == strategy) {
+                strategies[i] = strategies[strategies.length - 1];
+                strategies.pop();
+                break;
+            }
+        }
 
-    delete allocationCapBps[strategy];
-    delete lastKnownStrategyAssets[strategy];
+        isRegistered[strategy] = false;
+        isStrategyPaused[strategy] = false;
 
-    emit StrategyRemoved(strategy);
-}
+        delete allocationCapBps[strategy];
+        delete lastKnownStrategyAssets[strategy];
+
+        emit StrategyRemoved(strategy);
+    }
+
     function emergencyRemoveStrategy(
-    address strategy
-) external onlyOwner {
-    require(isRegistered[strategy], "Strategy not registered");
-    require(isStrategyPaused[strategy], "Strategy must be paused");
+        address strategy
+    ) external onlyOwner {
+        require(isRegistered[strategy], "Strategy not registered");
+        require(isStrategyPaused[strategy], "Strategy must be paused");
 
-    require(
-        lastKnownStrategyAssets[strategy] == 0,
-        "Strategy recovery balance not cleared"
-    );
+        require(
+            lastKnownStrategyAssets[strategy] == 0,
+            "Strategy recovery balance not cleared"
+        );
 
-    _removeStrategy(strategy);
-}
+        _removeStrategy(strategy);
+    }
 
     // Vault transfers assets into the manager.
     function fund(uint256 amount) external onlyVault {
@@ -206,7 +246,7 @@ function _removeStrategy(address strategy) internal {
     function allocate(
         address strategy,
         uint256 amount
-    ) external onlyVault {
+    ) external onlyVaultOrRebalancer {
         require(isRegistered[strategy], "Strategy not registered");
         require(amount > 0, "Invalid amount");
         require(!isStrategyPaused[strategy], "Strategy is paused");
@@ -247,44 +287,79 @@ function _removeStrategy(address strategy) internal {
 
     // Withdraw from a strategy and return the assets to the vault.
     function withdrawFromStrategy(
-    address strategy,
-    uint256 amount
-) external onlyVault {
-    require(isRegistered[strategy], "Strategy not registered");
-    require(amount > 0, "Invalid amount");
+        address strategy,
+        uint256 amount
+    ) external onlyVault {
+        require(isRegistered[strategy], "Strategy not registered");
+        require(amount > 0, "Invalid amount");
 
-    uint256 balanceBefore = asset.balanceOf(address(this));
+        uint256 balanceBefore = asset.balanceOf(address(this));
 
-    IStrategy(strategy).withdraw(amount);
+        IStrategy(strategy).withdraw(amount);
 
-    uint256 balanceAfter = asset.balanceOf(address(this));
+        uint256 balanceAfter = asset.balanceOf(address(this));
 
-    require(
-        balanceAfter >= balanceBefore,
-        "Invalid balance change"
-    );
+        require(
+            balanceAfter >= balanceBefore,
+            "Invalid balance change"
+        );
 
-    uint256 received = balanceAfter - balanceBefore;
+        uint256 received = balanceAfter - balanceBefore;
 
-    require(
-        received >= amount,
-        "Insufficient strategy withdrawal"
-    );
+        require(
+            received >= amount,
+            "Insufficient strategy withdrawal"
+        );
 
-    asset.safeTransfer(vault, amount);
+        asset.safeTransfer(vault, amount);
 
-    // Refresh the recovery reference when valuation is available.
-    try IStrategy(strategy).totalAssets() returns (
-        uint256 updatedAssets
-    ) {
-        lastKnownStrategyAssets[strategy] = updatedAssets;
-    } catch {
-        // Do not treat a failed valuation as a valid live balance.
-        // The vault's normal NAV calculation will fail closed.
+        // Refresh the recovery reference when valuation is available.
+        try IStrategy(strategy).totalAssets() returns (
+            uint256 updatedAssets
+        ) {
+            lastKnownStrategyAssets[strategy] = updatedAssets;
+        } catch {
+            // Do not treat a failed valuation as a valid live balance.
+            // The vault's normal NAV calculation will fail closed.
+        }
+
+        emit Withdrawn(strategy, amount);
     }
 
-    emit Withdrawn(strategy, amount);
-}
+    // Withdraw from strategy directly into manager liquid balance for rebalancing.
+    function rebalanceWithdraw(
+        address strategy,
+        uint256 amount
+    ) external onlyVaultOrRebalancer {
+        require(isRegistered[strategy], "Strategy not registered");
+        require(amount > 0, "Invalid amount");
+
+        uint256 balanceBefore = asset.balanceOf(address(this));
+
+        IStrategy(strategy).withdraw(amount);
+
+        uint256 balanceAfter = asset.balanceOf(address(this));
+
+        require(
+            balanceAfter >= balanceBefore,
+            "Invalid balance change"
+        );
+
+        uint256 received = balanceAfter - balanceBefore;
+
+        require(
+            received >= amount,
+            "Insufficient strategy withdrawal"
+        );
+
+        try IStrategy(strategy).totalAssets() returns (
+            uint256 updatedAssets
+        ) {
+            lastKnownStrategyAssets[strategy] = updatedAssets;
+        } catch {}
+
+        emit Withdrawn(strategy, amount);
+    }
 
     // Return manager-held liquid assets directly to the vault.
     function withdrawLiquid(uint256 amount) external onlyVault {
@@ -299,77 +374,76 @@ function _removeStrategy(address strategy) internal {
         emit VaultWithdrawal(amount);
     }
 
-    
     // Retrieve the requested amount from manager liquidity
     // and registered strategies, then transfer it to the vault.
     function withdrawToVault(uint256 amount) external onlyVault {
-    require(amount > 0, "Invalid amount");
+        require(amount > 0, "Invalid amount");
 
-    uint256 available = asset.balanceOf(address(this));
+        uint256 available = asset.balanceOf(address(this));
 
-    uint256 remaining = amount > available
-        ? amount - available
-        : 0;
+        uint256 remaining = amount > available
+            ? amount - available
+            : 0;
 
-    for (uint256 i = 0; i < strategies.length && remaining > 0; i++) {
-        address strategy = strategies[i];
+        for (uint256 i = 0; i < strategies.length && remaining > 0; i++) {
+            address strategy = strategies[i];
 
-        uint256 strategyAssets;
+            uint256 strategyAssets;
 
-        try IStrategy(strategy).totalAssets() returns (
-            uint256 reportedAssets
-        ) {
-            strategyAssets = reportedAssets;
-        } catch {
-            continue;
+            try IStrategy(strategy).totalAssets() returns (
+                uint256 reportedAssets
+            ) {
+                strategyAssets = reportedAssets;
+            } catch {
+                continue;
+            }
+
+            if (strategyAssets == 0) {
+                continue;
+            }
+
+            uint256 requested = strategyAssets < remaining
+                ? strategyAssets
+                : remaining;
+
+            uint256 balanceBefore = asset.balanceOf(address(this));
+
+            try IStrategy(strategy).withdraw(requested) {
+                uint256 balanceAfter = asset.balanceOf(address(this));
+
+                if (balanceAfter > balanceBefore) {
+                    uint256 received = balanceAfter - balanceBefore;
+
+                    try IStrategy(strategy).totalAssets() returns (
+                        uint256 updatedAssets
+                    ) {
+                        lastKnownStrategyAssets[strategy] = updatedAssets;
+                    } catch {
+                        uint256 previousKnown = lastKnownStrategyAssets[strategy];
+
+                        lastKnownStrategyAssets[strategy] =
+                            previousKnown > received
+                                ? previousKnown - received
+                                : 0;
+                    }
+
+                    if (received >= remaining) {
+                        remaining = 0;
+                    } else {
+                        remaining -= received;
+                    }
+                }
+            } catch {
+                continue;
+            }
         }
 
-        if (strategyAssets == 0) {
-            continue;
-        }
+        require(remaining == 0, "Insufficient portfolio liquidity");
 
-        uint256 requested = strategyAssets < remaining
-            ? strategyAssets
-            : remaining;
+        asset.safeTransfer(vault, amount);
 
-        uint256 balanceBefore = asset.balanceOf(address(this));
-
-        try IStrategy(strategy).withdraw(requested) {
-            uint256 balanceAfter = asset.balanceOf(address(this));
-
-            if (balanceAfter > balanceBefore) {
-    uint256 received = balanceAfter - balanceBefore;
-
-    try IStrategy(strategy).totalAssets() returns (
-        uint256 updatedAssets
-    ) {
-        lastKnownStrategyAssets[strategy] = updatedAssets;
-    } catch {
-        uint256 previousKnown = lastKnownStrategyAssets[strategy];
-
-        lastKnownStrategyAssets[strategy] =
-            previousKnown > received
-                ? previousKnown - received
-                : 0;
+        emit VaultWithdrawal(amount);
     }
-
-    if (received >= remaining) {
-        remaining = 0;
-    } else {
-        remaining -= received;
-    }
-}
-        } catch {
-            continue;
-        }
-    }
-
-    require(remaining == 0, "Insufficient portfolio liquidity");
-
-    asset.safeTransfer(vault, amount);
-
-    emit VaultWithdrawal(amount);
-}
 
     // Update a strategy's maximum portfolio allocation.
     function setAllocationCap(
@@ -400,53 +474,54 @@ function _removeStrategy(address strategy) internal {
     }
 
     function setStrategyPaused(
-    address strategy,
-    bool paused
-) external onlyOwner {
-    require(isRegistered[strategy], "Strategy not registered");
+        address strategy,
+        bool paused
+    ) external onlyOwnerOrEmergency {
+        require(isRegistered[strategy], "Strategy not registered");
 
-    isStrategyPaused[strategy] = paused;
+        isStrategyPaused[strategy] = paused;
 
-    emit StrategyPauseUpdated(strategy, paused);
-}
-function emergencyWithdrawFromStrategy(
-    address strategy,
-    uint256 amount
-) external onlyOwner {
-    require(isRegistered[strategy], "Strategy not registered");
-    require(isStrategyPaused[strategy], "Strategy must be paused");
-    require(amount > 0, "Invalid amount");
+        emit StrategyPauseUpdated(strategy, paused);
+    }
 
-    uint256 balanceBefore = asset.balanceOf(address(this));
+    function emergencyWithdrawFromStrategy(
+        address strategy,
+        uint256 amount
+    ) external onlyOwnerOrEmergency {
+        require(isRegistered[strategy], "Strategy not registered");
+        require(isStrategyPaused[strategy], "Strategy must be paused");
+        require(amount > 0, "Invalid amount");
 
-    // Deliberately do not call totalAssets().
-    IStrategy(strategy).withdraw(amount);
+        uint256 balanceBefore = asset.balanceOf(address(this));
 
-    uint256 balanceAfter = asset.balanceOf(address(this));
+        // Deliberately do not call totalAssets().
+        IStrategy(strategy).withdraw(amount);
 
-    require(
-        balanceAfter >= balanceBefore,
-        "Invalid balance change"
-    );
+        uint256 balanceAfter = asset.balanceOf(address(this));
 
-    uint256 received = balanceAfter - balanceBefore;
+        require(
+            balanceAfter >= balanceBefore,
+            "Invalid balance change"
+        );
 
-    require(received > 0, "No assets recovered");
+        uint256 received = balanceAfter - balanceBefore;
 
-    uint256 previousKnown = lastKnownStrategyAssets[strategy];
+        require(received > 0, "No assets recovered");
 
-    lastKnownStrategyAssets[strategy] =
-        previousKnown > received
-            ? previousKnown - received
-            : 0;
+        uint256 previousKnown = lastKnownStrategyAssets[strategy];
 
-    // Transfer recovered tokens directly to the vault.
-    asset.safeTransfer(vault, received);
+        lastKnownStrategyAssets[strategy] =
+            previousKnown > received
+                ? previousKnown - received
+                : 0;
 
-    emit EmergencyStrategyWithdrawal(
-        strategy,
-        amount,
-        received
-    );
-}
+        // Transfer recovered tokens directly to the vault.
+        asset.safeTransfer(vault, received);
+
+        emit EmergencyStrategyWithdrawal(
+            strategy,
+            amount,
+            received
+        );
+    }
 }

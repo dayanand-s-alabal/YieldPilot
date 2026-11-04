@@ -14,7 +14,9 @@ import {
   X,
   Moon,
   Sun,
-  ShieldAlert
+  ShieldAlert,
+  BarChart3,
+  TrendingUp
 } from 'lucide-react';
 import { useAccount, useChainId, useSwitchChain } from 'wagmi';
 
@@ -28,6 +30,9 @@ import { VaultOperations } from './components/vault/VaultOperations';
 import { StrategyManagement } from './components/strategies/StrategyManagement';
 import { TransactionHistory } from './components/history/TransactionHistory';
 import { ProfileView } from './components/profile/ProfileView';
+import { RebalancingDashboard } from './components/rebalancing/RebalancingDashboard';
+import { StrategyPerformanceAnalytics } from './components/analytics/StrategyPerformanceAnalytics';
+import { EmergencyRiskManagement } from './components/emergency/EmergencyRiskManagement';
 import { SEPOLIA_CHAIN_ID } from './contracts/addresses';
 
 export default function App() {
@@ -92,6 +97,8 @@ export default function App() {
               { id: 'rebalancing', label: 'Rebalancing', icon: RefreshCw },
               { id: 'history', label: 'Transaction History', icon: HistoryIcon },
               { id: 'profile', label: 'Account & Contracts', icon: User },
+              { id: 'analytics', label: 'Performance Analytics', icon: BarChart3 },
+              { id: 'emergency', label: 'Emergency Management', icon: ShieldAlert },
               { id: 'settings', label: 'Settings', icon: SettingsIcon },
             ].map((item) => {
               const Icon = item.icon;
@@ -224,7 +231,10 @@ export default function App() {
           )}
 
           {activeTab === 'rebalancing' && (
-            <RebalancingView />
+            <RebalancingDashboard 
+              blockchainData={blockchainData} 
+              txManager={txManager} 
+            />
           )}
 
           {activeTab === 'history' && (
@@ -233,6 +243,14 @@ export default function App() {
 
           {activeTab === 'profile' && (
             <ProfileView blockchainData={blockchainData} />
+          )}
+
+          {activeTab === 'analytics' && (
+            <StrategyPerformanceAnalytics blockchainData={blockchainData} />
+          )}
+
+          {activeTab === 'emergency' && (
+            <EmergencyRiskManagement blockchainData={blockchainData} txManager={txManager} />
           )}
 
           {activeTab === 'settings' && (
@@ -248,86 +266,6 @@ export default function App() {
   );
 }
 
-// Rebalancing View
-function RebalancingView() {
-  const [active, setActive] = useState(false);
-  const [success, setSuccess] = useState(false);
-
-  const handleSimulate = () => {
-    setActive(true);
-    setTimeout(() => {
-      setActive(false);
-      setSuccess(true);
-      setTimeout(() => setSuccess(false), 5000);
-    }, 1500);
-  };
-
-  return (
-    <div className="max-w-3xl mx-auto space-y-6 animate-in fade-in duration-300">
-      <div>
-        <h2 className="text-2xl font-bold text-slate-900 dark:text-white">Smart Rebalancing Engine</h2>
-        <p className="text-xs text-slate-400">Automated portfolio evaluation and strategy weight optimization.</p>
-      </div>
-
-      <div className="bg-white dark:bg-slate-900 p-8 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-xl space-y-6">
-        <div className="flex justify-between items-center pb-4 border-b border-slate-100 dark:border-slate-800">
-          <div>
-            <p className="text-xs font-semibold text-emerald-600 dark:text-emerald-400">Evaluation #RB-SEP-2026</p>
-            <h3 className="font-bold text-lg text-slate-900 dark:text-white">Sepolia Portfolio Allocation Review</h3>
-          </div>
-          <span className="px-3 py-1 bg-emerald-100 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-400 rounded-full text-xs font-bold">
-            Ready to Evaluate
-          </span>
-        </div>
-
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-          <div className="p-4 bg-slate-50 dark:bg-slate-800/50 rounded-2xl border border-slate-100 dark:border-slate-800 text-xs space-y-2">
-            <p className="font-bold text-slate-500 mb-2">StrategyManager Constraints</p>
-            <div className="flex justify-between text-emerald-200"><span>Minimum Reserve Requirement:</span><span className="font-bold">10% (1,000 bps)</span></div>
-            <div className="flex justify-between text-emerald-200"><span>Strategy Allocation Cap:</span><span className="font-bold">50% (5,000 bps)</span></div>
-            <div className="flex justify-betweenn text-emerald-200"><span>Target Strategy:</span><span className="font-bold font-mono">MockStrategy</span></div>
-          </div>
-
-          <div className="p-4 bg-emerald-50/50 dark:bg-emerald-950/20 rounded-2xl border border-emerald-100 dark:border-emerald-900/50 text-xs space-y-2">
-            <p className="font-bold text-emerald-600 dark:text-emerald-400 mb-2">Optimization Target</p>
-            <div className="flex justify-between text-emerald-200"><span>Maintain Liquid Reserve:</span><span className="font-bold">≥ 10%</span></div>
-            <div className="flex justify-between text-emerald-200"><span>Active Yield Allocation:</span><span className="font-bold">Up to 50%</span></div>
-            <div className="flex justify-between text-emerald-200"><span>Slippage & Loss Bound:</span><span className="font-bold">Strictly 0%</span></div>
-          </div>
-        </div>
-
-        <div className="p-4 bg-blue-50 dark:bg-blue-950/20 rounded-2xl border border-blue-200 dark:border-blue-900/50 flex items-start space-x-3 text-xs text-blue-800 dark:text-blue-300">
-          <ShieldAlert className="w-5 h-5 shrink-0 mt-0.5" />
-          <p>
-            Allocations between YieldVault, StrategyManager, and registered strategies are secured by invariant checks.
-          </p>
-        </div>
-
-        {success && (
-          <div className="p-4 bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 text-emerald-800 dark:text-emerald-300 rounded-2xl text-xs font-bold text-center">
-            Portfolio evaluated successfully! All parameters conform to reserve requirements.
-          </div>
-        )}
-
-        <button 
-          onClick={handleSimulate}
-          disabled={active}
-          className="w-full py-4 bg-emerald-600 hover:bg-emerald-700 text-white rounded-2xl font-bold text-sm shadow-lg shadow-emerald-600/30 transition-all flex items-center justify-center space-x-2"
-        >
-          {active ? (
-            <span className="flex items-center space-x-2">
-              <RefreshCw className="w-5 h-5 animate-spin" />
-              <span>Evaluating Portfolio on Sepolia...</span>
-            </span>
-          ) : (
-            <span>Run Rebalance Check</span>
-          )}
-        </button>
-      </div>
-    </div>
-  );
-}
-
 // Settings View
 function SettingsView({ darkMode, setDarkMode, isSepolia }) {
   const { switchChain } = useSwitchChain();
@@ -336,14 +274,14 @@ function SettingsView({ darkMode, setDarkMode, isSepolia }) {
     <div className="max-w-3xl mx-auto space-y-6 animate-in fade-in duration-300">
       <div>
         <h2 className="text-2xl font-bold text-slate-900 dark:text-white">Protocol Settings</h2>
-        <p className="text-xs text-slate-400">Configure theme preferences, RPC network connections and wallet parameters.</p>
+        <p className="text-xs text-slate-600 dark:text-slate-400 font-medium mt-1">Configure theme preferences, RPC network connections and wallet parameters.</p>
       </div>
 
       <div className="bg-white dark:bg-slate-900 p-8 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-xl space-y-6">
         <div className="flex justify-between items-center pb-6 border-b border-slate-100 dark:border-slate-800">
           <div>
             <h4 className="font-bold text-sm text-slate-900 dark:text-white">Blockchain Network</h4>
-            <p className="text-xs text-slate-400">YieldPilot contracts are deployed on Ethereum Sepolia Testnet</p>
+            <p className="text-xs text-slate-600 dark:text-slate-400 font-medium mt-0.5">YieldPilot contracts are deployed on Ethereum Sepolia Testnet</p>
           </div>
           <button
             onClick={() => switchChain({ chainId: SEPOLIA_CHAIN_ID })}
@@ -360,7 +298,7 @@ function SettingsView({ darkMode, setDarkMode, isSepolia }) {
         <div className="flex justify-between items-center pb-6 border-b border-slate-100 dark:border-slate-800">
           <div>
             <h4 className="font-bold text-sm text-slate-900 dark:text-white">Dark Mode Appearance</h4>
-            <p className="text-xs text-slate-400">Toggle between light and dark dashboard interface</p>
+            <p className="text-xs text-slate-600 dark:text-slate-400 font-medium mt-0.5">Toggle between light and dark dashboard interface</p>
           </div>
           <button 
             onClick={() => setDarkMode(!darkMode)}

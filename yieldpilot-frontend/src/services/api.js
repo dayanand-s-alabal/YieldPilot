@@ -85,5 +85,38 @@ export const api = {
       method: 'POST'
     });
     return res.json();
-  }
+  },
+
+  // APY Data Collector
+  getApyData: async () => {
+    const res = await fetch(`${API_BASE}/apy/current`);
+    return res.json();
+  },
+
+  // Risk Scoring
+  getRiskScores: async () => {
+    const res = await fetch(`${API_BASE}/risk/scores`);
+    return res.json();
+  },
+
+  updateRiskScore: async (strategyId, components) => {
+    const res = await fetch(`${API_BASE}/risk/scores/${strategyId}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(components)
+    });
+    return res.json();
+  },
+
+  // Volatility Monitoring
+  getVolatilityMetrics: async () => {
+    const res = await fetch(`${API_BASE}/volatility/current`);
+    return res.json();
+  },
+
+  // Price Oracle
+  getOraclePrices: async () => {
+    const res = await fetch(`${API_BASE}/oracle/prices`);
+    return res.json();
+  },
 };

@@ -1,25 +1,25 @@
 import { useState } from 'react';
 import { 
   Wallet, 
+  ArrowDownRight, 
+  ArrowUpRight, 
   Coins, 
   CheckCircle2, 
-  RefreshCw, 
-  Unlock
+  Unlock, 
+  RefreshCw,
+  AlertCircle
 } from 'lucide-react';
-import { parseUSDC, parseShares } from '../../contracts/utils';
+import { parseUSDC, parseShares, formatUSDC, formatShares } from '../../contracts/utils';
 
-export function VaultOperations({
-  blockchainData,
-  txManager,
-}) {
+export function VaultOperations({ blockchainData, txManager }) {
   const {
     address,
     isConnected,
     raw,
     userUSDCBalanceFormatted,
+    userAllowanceFormatted,
     userSharesFormatted,
     userRedeemableAssetsFormatted,
-    userAllowanceFormatted,
     refetch,
   } = blockchainData;
 
@@ -30,41 +30,40 @@ export function VaultOperations({
   const [isApproving, setIsApproving] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  // Check allowance for deposit
+  // Compute allowance sufficiency
   const parsedDepositAmount = parseUSDC(depositAmount);
-  const hasSufficientAllowance = parsedDepositAmount > 0n && raw.userAllowance >= parsedDepositAmount;
+  const hasSufficientAllowance = raw.userAllowance >= parsedDepositAmount && parsedDepositAmount > 0n;
 
-  // Expected shares for deposit (ratio preview)
-  const calcExpectedShares = (amountStr) => {
-    const val = parseFloat(amountStr);
-    if (!val || val <= 0) return '0.00';
-    if (raw.vaultTotalAssets > 0n && raw.vaultTotalSupply > 0n) {
-      const ratio = Number(raw.vaultTotalSupply) / Number(raw.vaultTotalAssets);
-      return (val * ratio).toFixed(2);
+  // Expected shares on deposit
+  const calcExpectedShares = (amount) => {
+    if (!amount || isNaN(Number(amount)) || Number(amount) <= 0) return '0.00';
+    const parsed = parseUSDC(amount);
+    if (raw.vaultTotalSupply === 0n || raw.vaultTotalAssets === 0n) {
+      return formatShares(parsed);
     }
-    return val.toFixed(2); // 1:1 initial deposit
+    const shares = (parsed * raw.vaultTotalSupply) / raw.vaultTotalAssets;
+    return formatShares(shares);
   };
 
-  // Expected shares to burn for withdraw
-  const calcExpectedSharesToBurn = (amountStr) => {
-    const val = parseFloat(amountStr);
-    if (!val || val <= 0) return '0.00';
-    if (raw.vaultTotalAssets > 0n && raw.vaultTotalSupply > 0n) {
-      const ratio = Number(raw.vaultTotalSupply) / Number(raw.vaultTotalAssets);
-      return (val * ratio).toFixed(2);
+  // Expected shares burned on withdraw
+  const calcExpectedSharesToBurn = (amount) => {
+    if (!amount || isNaN(Number(amount)) || Number(amount) <= 0) return '0.00';
+    const parsed = parseUSDC(amount);
+    if (raw.vaultTotalSupply === 0n || raw.vaultTotalAssets === 0n) {
+      return formatShares(parsed);
     }
-    return val.toFixed(2);
+    // Round up for previewWithdraw
+    const shares = (parsed * raw.vaultTotalSupply + (raw.vaultTotalAssets - 1n)) / raw.vaultTotalAssets;
+    return formatShares(shares);
   };
 
-  // Expected assets received for redemption
-  const calcExpectedAssetsForShares = (sharesStr) => {
-    const val = parseFloat(sharesStr);
-    if (!val || val <= 0) return '0.00';
-    if (raw.vaultTotalAssets > 0n && raw.vaultTotalSupply > 0n) {
-      const ratio = Number(raw.vaultTotalAssets) / Number(raw.vaultTotalSupply);
-      return (val * ratio).toFixed(2);
-    }
-    return val.toFixed(2);
+  // Expected USDC received on redeem
+  const calcExpectedAssetsForShares = (shares) => {
+    if (!shares || isNaN(Number(shares)) || Number(shares) <= 0) return '0.00';
+    const parsed = parseShares(shares);
+    if (raw.vaultTotalSupply === 0n) return '0.00';
+    const assets = (parsed * raw.vaultTotalAssets) / raw.vaultTotalSupply;
+    return formatUSDC(assets);
   };
 
   // 1. Handle Approve
@@ -87,6 +86,7 @@ export function VaultOperations({
       alert('Insufficient MockUSDC balance in wallet');
       return;
     }
+
     setIsSubmitting(true);
     try {
       await txManager.deposit(depositAmount);
@@ -102,14 +102,12 @@ export function VaultOperations({
     e.preventDefault();
     const parsedWithdraw = parseUSDC(withdrawAmount);
     if (!withdrawAmount || parsedWithdraw <= 0n) return;
-    
-    // Check if user has enough deposited assets
-    const userMaxAssets = raw.vaultTotalSupply > 0n
+    const maxRedeemableAssets = raw.vaultTotalSupply > 0n
       ? (raw.userShares * raw.vaultTotalAssets) / raw.vaultTotalSupply
       : 0n;
 
-    if (parsedWithdraw > userMaxAssets) {
-      alert('Insufficient redeemable balance in YieldVault');
+    if (parsedWithdraw > maxRedeemableAssets) {
+      alert('Withdrawal amount exceeds your redeemable vault assets');
       return;
     }
 
@@ -145,6 +143,13 @@ export function VaultOperations({
 
   return (
     <div className="max-w-2xl mx-auto space-y-6 animate-in fade-in duration-300">
+      <div>
+        <h2 className="text-2xl font-bold text-slate-900 dark:text-white">Vault Operations</h2>
+        <p className="text-xs text-slate-600 dark:text-slate-400 font-medium mt-1">
+          Deposit MockUSDC into YieldVault, withdraw underlying assets, or redeem ERC-4626 shares.
+        </p>
+      </div>
+
       <div className="bg-white dark:bg-slate-900 p-8 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-xl">
         {/* Navigation Tabs */}
         <div className="flex bg-slate-100 dark:bg-slate-800 p-1.5 rounded-2xl mb-8">
@@ -153,7 +158,7 @@ export function VaultOperations({
             className={`flex-1 py-3 rounded-xl font-bold text-xs transition-all ${
               activeTab === 'deposit'
                 ? 'bg-emerald-600 text-white shadow-md'
-                : 'text-slate-500 hover:text-slate-900 dark:hover:text-white'
+                : 'text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white'
             }`}
           >
             Deposit USDC
@@ -163,7 +168,7 @@ export function VaultOperations({
             className={`flex-1 py-3 rounded-xl font-bold text-xs transition-all ${
               activeTab === 'withdraw'
                 ? 'bg-emerald-600 text-white shadow-md'
-                : 'text-slate-500 hover:text-slate-900 dark:hover:text-white'
+                : 'text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white'
             }`}
           >
             Withdraw USDC
@@ -173,7 +178,7 @@ export function VaultOperations({
             className={`flex-1 py-3 rounded-xl font-bold text-xs transition-all ${
               activeTab === 'redeem'
                 ? 'bg-emerald-600 text-white shadow-md'
-                : 'text-slate-500 hover:text-slate-900 dark:hover:text-white'
+                : 'text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white'
             }`}
           >
             Redeem Shares
@@ -185,19 +190,19 @@ export function VaultOperations({
           <form onSubmit={handleDeposit} className="space-y-6">
             <div className="flex justify-between items-center p-4 bg-slate-50 dark:bg-slate-800/50 rounded-2xl border border-slate-100 dark:border-slate-800">
               <div>
-                <p className="text-xs text-slate-400 font-medium">Wallet MockUSDC Balance</p>
+                <p className="text-xs text-slate-600 dark:text-slate-400 font-semibold">Wallet MockUSDC Balance</p>
                 <p className="text-lg font-bold text-slate-900 dark:text-white">${userUSDCBalanceFormatted} USDC</p>
               </div>
               <div className="text-right">
-                <p className="text-xs text-slate-400 font-medium">Current Allowance</p>
-                <p className="text-sm font-semibold text-slate-700 dark:text-slate-300">${userAllowanceFormatted} USDC</p>
+                <p className="text-xs text-slate-600 dark:text-slate-400 font-semibold">Current Allowance</p>
+                <p className="text-sm font-bold text-slate-800 dark:text-slate-200">${userAllowanceFormatted} USDC</p>
               </div>
             </div>
 
             <div>
               <div className="flex justify-between items-center mb-2">
-                <label className="text-xs font-bold text-slate-700 dark:text-slate-300">Deposit Amount (USDC)</label>
-                <span className="text-[11px] text-slate-400">Decimals: 6</span>
+                <label className="text-xs font-bold text-slate-900 dark:text-white">Deposit Amount (USDC)</label>
+                <span className="text-[11px] text-slate-500 dark:text-slate-400 font-medium">Decimals: 6</span>
               </div>
               <div className="relative">
                 <input
@@ -220,15 +225,15 @@ export function VaultOperations({
             </div>
 
             <div className="p-4 bg-slate-50 dark:bg-slate-800/40 rounded-2xl border border-slate-100 dark:border-slate-800/60 space-y-2 text-xs">
-              <div className="flex justify-between text-slate-500 dark:text-slate-400">
+              <div className="flex justify-between text-slate-600 dark:text-slate-400 font-medium">
                 <span>Expected ypSHARE Minted:</span>
                 <span className="font-bold text-emerald-600 dark:text-emerald-400">
                   ~{calcExpectedShares(depositAmount)} ypSHARE
                 </span>
               </div>
-              <div className="flex justify-between text-slate-500 dark:text-slate-400">
+              <div className="flex justify-between text-slate-600 dark:text-slate-400 font-medium">
                 <span>Exchange Rate:</span>
-                <span className="font-semibold text-slate-700 dark:text-slate-300">1 ypSHARE ≈ {raw.vaultTotalSupply > 0n ? (Number(raw.vaultTotalAssets) / Number(raw.vaultTotalSupply)).toFixed(4) : '1.0000'} USDC</span>
+                <span className="font-bold text-slate-800 dark:text-slate-200">1 ypSHARE ≈ {raw.vaultTotalSupply > 0n ? (Number(raw.vaultTotalAssets) / Number(raw.vaultTotalSupply)).toFixed(4) : '1.0000'} USDC</span>
               </div>
             </div>
 
@@ -253,13 +258,13 @@ export function VaultOperations({
                     </>
                   )}
                 </button>
-                <p className="text-center text-[11px] text-slate-400">
+                <p className="text-center text-[11px] text-slate-500 dark:text-slate-400 font-medium">
                   You must authorize YieldVault to transfer your MockUSDC before depositing.
                 </p>
               </div>
             ) : (
               <div className="space-y-3">
-                <div className="flex items-center space-x-2 text-xs text-emerald-600 dark:text-emerald-400 justify-center font-semibold">
+                <div className="flex items-center space-x-2 text-xs text-emerald-600 dark:text-emerald-400 justify-center font-bold">
                   <CheckCircle2 className="w-4 h-4" />
                   <span>Allowance verified ({userAllowanceFormatted} USDC approved)</span>
                 </div>
@@ -290,19 +295,19 @@ export function VaultOperations({
           <form onSubmit={handleWithdraw} className="space-y-6">
             <div className="flex justify-between items-center p-4 bg-slate-50 dark:bg-slate-800/50 rounded-2xl border border-slate-100 dark:border-slate-800">
               <div>
-                <p className="text-xs text-slate-400 font-medium">Available Redeemable USDC</p>
+                <p className="text-xs text-slate-600 dark:text-slate-400 font-semibold">Available Redeemable USDC</p>
                 <p className="text-lg font-bold text-slate-900 dark:text-white">${userRedeemableAssetsFormatted} USDC</p>
               </div>
               <div className="text-right">
-                <p className="text-xs text-slate-400 font-medium">Shares Balance</p>
-                <p className="text-sm font-semibold text-slate-700 dark:text-slate-300">{userSharesFormatted} ypSHARE</p>
+                <p className="text-xs text-slate-600 dark:text-slate-400 font-semibold">Shares Balance</p>
+                <p className="text-sm font-bold text-slate-800 dark:text-slate-200">{userSharesFormatted} ypSHARE</p>
               </div>
             </div>
 
             <div>
               <div className="flex justify-between items-center mb-2">
-                <label className="text-xs font-bold text-slate-700 dark:text-slate-300">Withdraw Amount (USDC)</label>
-                <span className="text-[11px] text-slate-400">Assets requested</span>
+                <label className="text-xs font-bold text-slate-900 dark:text-white">Withdraw Amount (USDC)</label>
+                <span className="text-[11px] text-slate-500 dark:text-slate-400 font-medium">Assets requested</span>
               </div>
               <div className="relative">
                 <input
@@ -330,15 +335,15 @@ export function VaultOperations({
             </div>
 
             <div className="p-4 bg-slate-50 dark:bg-slate-800/40 rounded-2xl border border-slate-100 dark:border-slate-800/60 space-y-2 text-xs">
-              <div className="flex justify-between text-slate-500 dark:text-slate-400">
+              <div className="flex justify-between text-slate-600 dark:text-slate-400 font-medium">
                 <span>Estimated Shares to Burn:</span>
                 <span className="font-bold text-rose-500">
                   ~{calcExpectedSharesToBurn(withdrawAmount)} ypSHARE
                 </span>
               </div>
-              <div className="flex justify-between text-slate-500 dark:text-slate-400">
+              <div className="flex justify-between text-slate-600 dark:text-slate-400 font-medium">
                 <span>Receiver:</span>
-                <span className="font-mono text-slate-700 dark:text-slate-300">{address ? `${address.slice(0, 10)}...` : 'Connected Wallet'}</span>
+                <span className="font-mono text-slate-800 dark:text-slate-200 font-semibold">{address ? `${address.slice(0, 10)}...` : 'Connected Wallet'}</span>
               </div>
             </div>
 
@@ -367,19 +372,19 @@ export function VaultOperations({
           <form onSubmit={handleRedeem} className="space-y-6">
             <div className="flex justify-between items-center p-4 bg-slate-50 dark:bg-slate-800/50 rounded-2xl border border-slate-100 dark:border-slate-800">
               <div>
-                <p className="text-xs text-slate-400 font-medium">Your Vault Shares</p>
+                <p className="text-xs text-slate-600 dark:text-slate-400 font-semibold">Your Vault Shares</p>
                 <p className="text-lg font-bold text-indigo-600 dark:text-indigo-400">{userSharesFormatted} ypSHARE</p>
               </div>
               <div className="text-right">
-                <p className="text-xs text-slate-400 font-medium">Estimated Asset Value</p>
-                <p className="text-sm font-semibold text-slate-700 dark:text-slate-300">${userRedeemableAssetsFormatted} USDC</p>
+                <p className="text-xs text-slate-600 dark:text-slate-400 font-semibold">Estimated Asset Value</p>
+                <p className="text-sm font-bold text-slate-800 dark:text-slate-200">${userRedeemableAssetsFormatted} USDC</p>
               </div>
             </div>
 
             <div>
               <div className="flex justify-between items-center mb-2">
-                <label className="text-xs font-bold text-slate-700 dark:text-slate-300">Shares to Redeem (ypSHARE)</label>
-                <span className="text-[11px] text-slate-400">Burn shares for USDC</span>
+                <label className="text-xs font-bold text-slate-900 dark:text-white">Shares to Redeem (ypSHARE)</label>
+                <span className="text-[11px] text-slate-500 dark:text-slate-400 font-medium">Burn shares for USDC</span>
               </div>
               <div className="relative">
                 <input
@@ -402,7 +407,7 @@ export function VaultOperations({
             </div>
 
             <div className="p-4 bg-slate-50 dark:bg-slate-800/40 rounded-2xl border border-slate-100 dark:border-slate-800/60 space-y-2 text-xs">
-              <div className="flex justify-between text-slate-500 dark:text-slate-400">
+              <div className="flex justify-between text-slate-600 dark:text-slate-400 font-medium">
                 <span>Estimated USDC Received:</span>
                 <span className="font-bold text-emerald-600 dark:text-emerald-400">
                   ~${calcExpectedAssetsForShares(redeemSharesAmount)} USDC
